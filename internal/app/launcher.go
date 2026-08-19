@@ -4,9 +4,13 @@ package app
 
 import (
 	"context"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/rizvi14/SoloSet/internal/docker"
+	"github.com/rizvi14/SoloSet/internal/superset"
+	"github.com/rizvi14/SoloSet/internal/system"
 	"github.com/rizvi14/SoloSet/internal/web"
 )
 
@@ -20,6 +24,8 @@ type Launcher struct {
 
 	mu      sync.Mutex // serializes flow runs so a retry can't overlap one in progress
 	running bool
+
+	compose *docker.Compose // set once Superset launch begins; used by Stop (M5)
 }
 
 // NewLauncher builds a Launcher bound to a base context used for all spawned
@@ -87,8 +93,112 @@ func (l *Launcher) detectDocker() {
 	}
 }
 
-// launchSuperset is filled in by M3. For now it confirms Docker is ready.
+// launchSuperset brings up the Superset container, runs one-time init on first
+// launch, waits for it to respond, and marks the app ready.
 func (l *Launcher) launchSuperset() {
-	l.store.Set(web.PhaseStarting, "Docker is ready.",
-		"Superset launch lands in the next build — Docker detection is working.")
+	l.store.Set(web.PhaseStarting, "Starting Superset…",
+		"Preparing the container. The first run downloads the Superset image and example data — this can take several minutes.")
+
+	key, err := system.SecretKey()
+	if err != nil {
+		l.fail("Could not prepare SoloSet's configuration.", err)
+		return
+	}
+	comp, err := docker.NewCompose(key)
+	if err != nil {
+		l.fail("Could not prepare the Superset configuration.", err)
+		return
+	}
+	l.compose = comp
+
+	logLine := func(s string) {
+		if s != "" {
+			l.store.AppendLog(s)
+		}
+	}
+
+	// The pull prints hundreds of per-layer progress lines; keep only the
+	// meaningful ones in the activity log.
+	pullLog := func(s string) {
+		if keepComposeLine(s) {
+			l.store.AppendLog(strings.TrimSpace(s))
+		}
+	}
+	l.store.AppendLog("Pulling the Superset image and starting the container…")
+	if err := comp.Up(l.ctx, pullLog); err != nil {
+		l.fail("Failed to start the Superset container.", err)
+		return
+	}
+
+	if l.needsInit() {
+		if !l.initialize(comp, logLine) {
+			return // initialize() already reported the failure
+		}
+	} else {
+		l.store.AppendLog("Superset is already set up — skipping first-time initialization.")
+	}
+
+	l.store.Set(web.PhaseStarting, "Almost there…", "Waiting for Superset to respond.")
+	if err := superset.WaitHealthy(l.ctx, 3*time.Minute); err != nil {
+		l.fail("Superset started but isn’t responding yet.", err)
+		return
+	}
+
+	l.store.AppendLog("Superset is up.")
+	l.store.SetReady(superset.BaseURL, superset.Username, superset.Password)
+}
+
+// needsInit reports whether first-time initialization is required, by checking
+// for the sentinel file on the data volume.
+func (l *Launcher) needsInit() bool {
+	// A zero exit means the marker exists (already initialized).
+	err := l.compose.Exec(l.ctx, nil, "test", "-f", superset.InitMarker)
+	return err != nil
+}
+
+// initialize runs the one-time setup: migrate the DB, create the admin user,
+// initialize roles, and load example dashboards. Returns false (after reporting)
+// if a required step fails.
+func (l *Launcher) initialize(comp *docker.Compose, logLine docker.LineFunc) bool {
+	l.store.Set(web.PhaseStarting, "Setting up Superset…",
+		"One-time setup: creating the database, admin user, and loading example dashboards.")
+
+	step := func(args []string, fatal bool) bool {
+		l.store.AppendLog("$ " + strings.Join(args, " "))
+		if err := comp.Exec(l.ctx, logLine, args...); err != nil {
+			if fatal {
+				l.fail("Superset setup failed while running: "+strings.Join(args, " "), err)
+				return false
+			}
+			l.store.AppendLog("(continuing) step reported: " + err.Error())
+		}
+		return true
+	}
+
+	if !step(superset.DBUpgradeArgs(), true) {
+		return false
+	}
+	// create-admin is non-fatal: a re-run after a partial init would find the
+	// user already present.
+	step(superset.CreateAdminArgs(), false)
+	if !step(superset.InitArgs(), true) {
+		return false
+	}
+	// Examples are a nice-to-have; Superset is fully usable without them.
+	l.store.AppendLog("Loading example dashboards (downloads sample data)…")
+	step(superset.LoadExamplesArgs(), false)
+
+	// Record that init is done so future launches skip it.
+	if err := comp.Exec(l.ctx, nil, "touch", superset.InitMarker); err != nil {
+		l.store.AppendLog("Note: could not write the setup marker; examples may reload next time.")
+	}
+	return true
+}
+
+// fail records an error phase with the underlying detail in the log.
+func (l *Launcher) fail(message string, err error) {
+	if err != nil {
+		l.store.AppendLog("Error: " + err.Error())
+	}
+	l.store.Set(web.PhaseError, message, "See the activity log for details, then retry.")
 }

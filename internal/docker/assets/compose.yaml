@@ -1,0 +1,26 @@
+# SoloSet-managed Apache Superset stack.
+#
+# Deliberately self-contained: a single Superset container with its metadata in
+# a SQLite database on a named volume. No external scripts, env files, Postgres,
+# or Redis — SoloSet runs the one-time init (db upgrade / create-admin / init /
+# load_examples) itself via `docker compose exec`. This keeps the whole thing
+# embeddable in the binary and robust for a single local user.
+services:
+  superset:
+    image: apache/superset:6.0.0
+    container_name: soloset-superset
+    environment:
+      # Required by Superset to sign sessions; SoloSet generates and passes a
+      # stable per-machine key. `:?` makes compose fail loudly if it's missing.
+      SUPERSET_SECRET_KEY: "${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY must be set by SoloSet}"
+      # Pin the app home so the SQLite metadata DB lands on the mounted volume
+      # and survives restarts.
+      SUPERSET_HOME: /app/superset_home
+    ports:
+      - "8088:8088"
+    volumes:
+      - superset_home:/app/superset_home
+    restart: unless-stopped
+
+volumes:
+  superset_home:
