@@ -117,6 +117,10 @@ Actions workflow that builds and publishes binaries for all platforms.
 - **Setup is slow the first time** — that's the image download and example load;
   subsequent launches are quick.
 
+## License
+
+SoloSet is released under the [Apache License 2.0](LICENSE).
+
 ---
 
 *SoloSet is an independent launcher. Apache Superset is a separate project of the
