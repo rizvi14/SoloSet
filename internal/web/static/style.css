@@ -74,6 +74,7 @@ body {
 .indicator[data-phase="init"],
 .indicator[data-phase="checking_docker"],
 .indicator[data-phase="starting_superset"],
+.indicator[data-phase="installing_docker"],
 .indicator[data-phase="stopping"] {
   background: var(--accent);
   animation: pulse 1.4s ease-in-out infinite;

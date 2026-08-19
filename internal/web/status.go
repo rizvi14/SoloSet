@@ -14,6 +14,7 @@ const (
 	PhaseInit           Phase = "init"             // just started up
 	PhaseCheckingDocker Phase = "checking_docker"  // probing for Docker
 	PhaseDockerMissing  Phase = "docker_missing"   // Docker not installed
+	PhaseInstallingDocker Phase = "installing_docker" // installing Docker Desktop
 	PhaseDockerStopped  Phase = "docker_stopped"   // installed but daemon not running
 	PhaseStarting       Phase = "starting_superset" // docker compose up in progress
 	PhaseReady          Phase = "ready"            // Superset is up and reachable

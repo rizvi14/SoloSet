@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -95,12 +96,70 @@ func (l *Launcher) Quit() {
 	}
 }
 
-// InstallDocker is wired up in M4. For now it tells the user to install Docker
-// manually rather than leaving the button silently dead.
+// InstallDocker installs Docker Desktop, starts it, waits for the daemon, and
+// then continues to launch Superset. Runs on its own goroutine under the busy
+// guard so it can't overlap another operation.
 func (l *Launcher) InstallDocker() {
-	l.store.AppendLog("Automatic Docker install isn't available yet in this build.")
-	l.store.Set(web.PhaseDockerMissing, "Install Docker Desktop, then retry.",
-		"Automatic install is coming soon. For now, install Docker Desktop from docker.com, start it, then click retry.")
+	if !l.tryBegin() {
+		return
+	}
+	go func() {
+		defer l.end()
+		l.installDocker()
+	}()
+}
+
+func (l *Launcher) installDocker() {
+	l.store.Set(web.PhaseInstallingDocker, "Installing Docker Desktop…",
+		"This can take several minutes and may ask for administrator permission. Watch progress in the activity log.")
+	l.store.AppendLog("Installing Docker Desktop…")
+
+	err := system.InstallDocker(l.ctx, func(s string) {
+		if s != "" {
+			l.store.AppendLog(s)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, system.ErrManualInstall) {
+			l.store.AppendLog("Automatic install isn’t available on this system.")
+			_ = system.OpenBrowser(system.DockerDownloadURL)
+			l.store.Set(web.PhaseDockerMissing, "Install Docker Desktop to continue.",
+				"I opened the Docker download page. Install Docker Desktop, start it, then click retry.")
+			return
+		}
+		l.fail("Docker installation failed.", err)
+		return
+	}
+
+	l.store.AppendLog("Docker Desktop installed. Starting it…")
+	system.StartDockerDesktop()
+
+	l.store.Set(web.PhaseCheckingDocker, "Waiting for Docker to start…",
+		"Docker Desktop is starting up — this can take a minute on first launch.")
+	if l.waitForDocker(3 * time.Minute) {
+		l.launchSuperset()
+		return
+	}
+	l.store.Set(web.PhaseDockerStopped, "Docker is installed but hasn’t finished starting.",
+		"Give Docker Desktop a moment to finish starting, then click retry.")
+}
+
+// waitForDocker polls until the Docker daemon is running or the timeout hits.
+func (l *Launcher) waitForDocker(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if docker.Detect(l.ctx).State == docker.StateRunning {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-l.ctx.Done():
+			return false
+		case <-time.After(5 * time.Second):
+		}
+	}
 }
 
 // tryBegin marks the launcher busy, returning false if an operation (run/stop)
