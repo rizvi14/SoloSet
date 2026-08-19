@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SoloSet</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">◧</span>
+        <span class="brand-name">SoloSet</span>
+      </div>
+      <p class="tagline">One-click Apache Superset, running locally.</p>
+    </header>
+
+    <section class="card" id="status-card" aria-live="polite">
+      <div class="status-head">
+        <span class="indicator" id="indicator" data-phase="init"></span>
+        <div class="status-text">
+          <h1 class="status-message" id="status-message">Starting SoloSet…</h1>
+          <p class="status-detail" id="status-detail"></p>
+        </div>
+      </div>
+
+      <div class="actions" id="actions" hidden></div>
+
+      <div class="credentials" id="credentials" hidden>
+        <h2>Sign in with</h2>
+        <dl>
+          <div><dt>URL</dt><dd id="cred-url"></dd></div>
+          <div><dt>Username</dt><dd id="cred-user"></dd></div>
+          <div><dt>Password</dt><dd id="cred-pass"></dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="logs" id="logs-panel">
+      <button class="logs-toggle" id="logs-toggle" aria-expanded="false">
+        Activity log <span class="chevron" aria-hidden="true">▾</span>
+      </button>
+      <pre class="logs-body" id="logs-body" hidden></pre>
+    </section>
+
+    <footer class="footpanel">
+      <span class="conn" id="conn" data-state="connecting">connecting…</span>
+    </footer>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
