@@ -12,15 +12,23 @@ import (
 //go:embed static
 var staticFS embed.FS
 
-// Server exposes the SoloSet status UI and its backing API over local HTTP.
-type Server struct {
-	store *Store
-	mux   *http.ServeMux
+// Actions are the callbacks the status page can trigger. Any nil callback is
+// treated as a no-op, so the server works even before a milestone wires one up.
+type Actions struct {
+	Retry         func()
+	InstallDocker func()
 }
 
-// NewServer wires up the routes around the given Store.
-func NewServer(store *Store) *Server {
-	s := &Server{store: store, mux: http.NewServeMux()}
+// Server exposes the SoloSet status UI and its backing API over local HTTP.
+type Server struct {
+	store   *Store
+	actions Actions
+	mux     *http.ServeMux
+}
+
+// NewServer wires up the routes around the given Store and action callbacks.
+func NewServer(store *Store, actions Actions) *Server {
+	s := &Server{store: store, actions: actions, mux: http.NewServeMux()}
 
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -31,8 +39,25 @@ func NewServer(store *Store) *Server {
 	s.mux.Handle("/", http.FileServer(http.FS(sub)))
 	s.mux.HandleFunc("/api/status", s.handleStatus)
 	s.mux.HandleFunc("/api/events", s.handleEvents)
+	s.mux.HandleFunc("/api/retry", s.action(actions.Retry))
+	s.mux.HandleFunc("/api/install-docker", s.action(actions.InstallDocker))
 
 	return s
+}
+
+// action returns a POST-only handler that invokes fn (a nil fn is a clean
+// no-op) and replies 202.
+func (s *Server) action(fn func()) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if fn != nil {
+			fn()
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}
 }
 
 // Handler returns the root HTTP handler for embedding in an http.Server.

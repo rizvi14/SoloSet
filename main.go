@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/rizvi14/SoloSet/internal/app"
 	"github.com/rizvi14/SoloSet/internal/system"
 	"github.com/rizvi14/SoloSet/internal/web"
 )
@@ -29,8 +30,16 @@ func main() {
 }
 
 func run() error {
+	// The app context is cancelled on Ctrl+C; all launch work hangs off it.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	store := web.NewStore()
-	server := web.NewServer(store)
+	launcher := app.NewLauncher(ctx, store)
+	server := web.NewServer(store, web.Actions{
+		Retry:         launcher.Retry,
+		InstallDocker: launcher.InstallDocker,
+	})
 
 	listener, err := listen()
 	if err != nil {
@@ -53,15 +62,11 @@ func run() error {
 		}
 	}
 
-	// M1 placeholder: prove the status pipeline end-to-end. Docker detection
-	// (M2) and Superset launch (M3) replace this block.
-	store.Set(web.PhaseInit, "SoloSet is running.",
-		"Skeleton is live — Docker detection and Superset launch come next.")
+	// Kick off the launch flow: probe Docker, then bring up Superset.
 	store.AppendLog("Local status server started at " + url)
+	launcher.Start()
 
 	// Block until interrupted, then shut the server down cleanly.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 	<-ctx.Done()
 
 	fmt.Println("\nShutting down…")
