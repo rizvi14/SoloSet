@@ -73,11 +73,13 @@ body {
 /* Working phases pulse; terminal phases sit solid. */
 .indicator[data-phase="init"],
 .indicator[data-phase="checking_docker"],
-.indicator[data-phase="starting_superset"] {
+.indicator[data-phase="starting_superset"],
+.indicator[data-phase="stopping"] {
   background: var(--accent);
   animation: pulse 1.4s ease-in-out infinite;
 }
 .indicator[data-phase="ready"] { background: var(--accent); animation: none; }
+.indicator[data-phase="stopped"] { background: var(--muted); animation: none; }
 .indicator[data-phase="docker_missing"],
 .indicator[data-phase="docker_stopped"] { background: var(--warn); animation: none; }
 .indicator[data-phase="error"] { background: var(--danger); animation: none; }

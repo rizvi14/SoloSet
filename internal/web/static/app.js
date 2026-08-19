@@ -21,7 +21,16 @@ const el = {
 function actionsFor(status) {
   switch (status.phase) {
     case "ready":
-      return [{ label: "Open Superset", href: status.supersetUrl, kind: "primary" }];
+      return [
+        { label: "Open Superset", href: status.supersetUrl, kind: "primary" },
+        { label: "Stop Superset", post: "/api/stop", kind: "secondary" },
+        { label: "Quit SoloSet", post: "/api/quit", kind: "secondary" },
+      ];
+    case "stopped":
+      return [
+        { label: "Start Superset", post: "/api/start", kind: "primary" },
+        { label: "Quit SoloSet", post: "/api/quit", kind: "secondary" },
+      ];
     case "docker_missing":
       return [
         { label: "Install Docker Desktop", post: "/api/install-docker", kind: "primary" },

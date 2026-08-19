@@ -30,15 +30,20 @@ func main() {
 }
 
 func run() error {
-	// The app context is cancelled on Ctrl+C; all launch work hangs off it.
+	// The app context is cancelled on Ctrl+C or when the user clicks Quit.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	store := web.NewStore()
-	launcher := app.NewLauncher(ctx, store)
+	launcher := app.NewLauncher(ctx, store, cancel) // cancel = quit
 	server := web.NewServer(store, web.Actions{
 		Retry:         launcher.Retry,
 		InstallDocker: launcher.InstallDocker,
+		Start:         launcher.Retry, // "Start" from stopped re-runs the flow
+		Stop:          launcher.Stop,
+		Quit:          launcher.Quit,
 	})
 
 	listener, err := listen()

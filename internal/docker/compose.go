@@ -74,6 +74,15 @@ func (c *Compose) Exec(ctx context.Context, onLine LineFunc, args ...string) err
 	return runStreaming(c.command(ctx, full...), onLine)
 }
 
+// IsRunning reports whether SoloSet's Superset container is currently running.
+func (c *Compose) IsRunning(ctx context.Context) bool {
+	out, err := c.command(ctx, "ps", "--status", "running", "-q").Output()
+	if err != nil {
+		return false
+	}
+	return len(bytes.TrimSpace(out)) > 0
+}
+
 // Stop stops the containers but keeps the data volume, so a later start is fast.
 func (c *Compose) Stop(ctx context.Context, onLine LineFunc) error {
 	return runStreaming(c.command(ctx, "stop"), onLine)

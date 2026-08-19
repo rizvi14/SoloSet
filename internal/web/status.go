@@ -17,6 +17,8 @@ const (
 	PhaseDockerStopped  Phase = "docker_stopped"   // installed but daemon not running
 	PhaseStarting       Phase = "starting_superset" // docker compose up in progress
 	PhaseReady          Phase = "ready"            // Superset is up and reachable
+	PhaseStopping       Phase = "stopping"         // stop in progress
+	PhaseStopped        Phase = "stopped"          // user stopped Superset
 	PhaseError          Phase = "error"            // something went wrong
 )
 

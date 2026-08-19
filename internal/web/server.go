@@ -17,6 +17,9 @@ var staticFS embed.FS
 type Actions struct {
 	Retry         func()
 	InstallDocker func()
+	Start         func()
+	Stop          func()
+	Quit          func()
 }
 
 // Server exposes the SoloSet status UI and its backing API over local HTTP.
@@ -41,6 +44,9 @@ func NewServer(store *Store, actions Actions) *Server {
 	s.mux.HandleFunc("/api/events", s.handleEvents)
 	s.mux.HandleFunc("/api/retry", s.action(actions.Retry))
 	s.mux.HandleFunc("/api/install-docker", s.action(actions.InstallDocker))
+	s.mux.HandleFunc("/api/start", s.action(actions.Start))
+	s.mux.HandleFunc("/api/stop", s.action(actions.Stop))
+	s.mux.HandleFunc("/api/quit", s.action(actions.Quit))
 
 	return s
 }

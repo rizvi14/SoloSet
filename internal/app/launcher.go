@@ -21,25 +21,79 @@ import (
 type Launcher struct {
 	store *web.Store
 	ctx   context.Context
+	quit  func() // asks the process to shut down (Quit button)
 
-	mu      sync.Mutex // serializes flow runs so a retry can't overlap one in progress
+	mu      sync.Mutex // guards running and compose
 	running bool
-
-	compose *docker.Compose // set once Superset launch begins; used by Stop (M5)
+	compose *docker.Compose // set once Superset launch begins; used by Stop/Quit
 }
 
 // NewLauncher builds a Launcher bound to a base context used for all spawned
-// work (cancelled on shutdown).
-func NewLauncher(ctx context.Context, store *web.Store) *Launcher {
-	return &Launcher{store: store, ctx: ctx}
+// work (cancelled on shutdown). quit is invoked when the user asks to close
+// SoloSet.
+func NewLauncher(ctx context.Context, store *web.Store, quit func()) *Launcher {
+	return &Launcher{store: store, ctx: ctx, quit: quit}
+}
+
+// getCompose returns the current compose handle (nil before launch begins).
+func (l *Launcher) getCompose() *docker.Compose {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.compose
+}
+
+// setCompose stores the compose handle for later Stop/Quit use.
+func (l *Launcher) setCompose(c *docker.Compose) {
+	l.mu.Lock()
+	l.compose = c
+	l.mu.Unlock()
 }
 
 // Start kicks off the flow in the background.
 func (l *Launcher) Start() { l.run() }
 
-// Retry re-runs the flow, used by the "retry" buttons after the user starts
-// Docker or installs it.
+// Retry re-runs the whole flow. It doubles as the "Start" action from the
+// stopped state: re-detecting Docker and running compose up brings a stopped
+// container back (init is skipped) and reaches ready.
 func (l *Launcher) Retry() { l.run() }
+
+// Stop stops the Superset container, keeping its data, and moves to the stopped
+// state. No-op if Superset was never launched or another operation is running.
+func (l *Launcher) Stop() {
+	comp := l.getCompose()
+	if comp == nil {
+		return
+	}
+	if !l.tryBegin() {
+		return // another operation (start/stop/retry) is in flight
+	}
+	go func() {
+		defer l.end()
+		l.store.Set(web.PhaseStopping, "Stopping Superset…", "Shutting down the container. Your data is kept.")
+		l.store.AppendLog("Stopping Superset…")
+		if err := comp.Stop(l.ctx, func(s string) { l.store.AppendLog(s) }); err != nil {
+			l.fail("Couldn’t stop Superset.", err)
+			return
+		}
+		l.store.Set(web.PhaseStopped, "Superset is stopped.",
+			"Your dashboards and data are saved. Start it again whenever you like.")
+	}()
+}
+
+// Quit closes SoloSet but deliberately leaves Superset running in Docker, so the
+// user keeps their session; a later launch reconnects to it instantly.
+func (l *Launcher) Quit() {
+	l.store.Set(web.PhaseStopped, "SoloSet closed.",
+		"Superset is still running in Docker — you can close this tab. Reopen SoloSet anytime to manage it.")
+	l.store.AppendLog("Closing SoloSet (Superset keeps running).")
+	if l.quit != nil {
+		// Give the HTTP response and a final SSE frame a moment to flush.
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			l.quit()
+		}()
+	}
+}
 
 // InstallDocker is wired up in M4. For now it tells the user to install Docker
 // manually rather than leaving the button silently dead.
@@ -49,22 +103,33 @@ func (l *Launcher) InstallDocker() {
 		"Automatic install is coming soon. For now, install Docker Desktop from docker.com, start it, then click retry.")
 }
 
-// run executes the flow once, guarding against concurrent/overlapping runs.
-func (l *Launcher) run() {
+// tryBegin marks the launcher busy, returning false if an operation (run/stop)
+// is already in flight. This serializes all compose operations so they can't
+// race each other.
+func (l *Launcher) tryBegin() bool {
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.running {
-		l.mu.Unlock()
-		return
+		return false
 	}
 	l.running = true
-	l.mu.Unlock()
+	return true
+}
 
+// end clears the busy flag.
+func (l *Launcher) end() {
+	l.mu.Lock()
+	l.running = false
+	l.mu.Unlock()
+}
+
+// run executes the flow once, guarding against concurrent/overlapping runs.
+func (l *Launcher) run() {
+	if !l.tryBegin() {
+		return
+	}
 	go func() {
-		defer func() {
-			l.mu.Lock()
-			l.running = false
-			l.mu.Unlock()
-		}()
+		defer l.end()
 		l.detectDocker()
 	}()
 }
@@ -109,7 +174,15 @@ func (l *Launcher) launchSuperset() {
 		l.fail("Could not prepare the Superset configuration.", err)
 		return
 	}
-	l.compose = comp
+	l.setCompose(comp)
+
+	// If our container isn't already the one on 8088, make sure nothing else is
+	// holding the port before we try to publish it.
+	if !comp.IsRunning(l.ctx) && system.PortInUse("127.0.0.1:8088") {
+		l.store.Set(web.PhaseError, "Port 8088 is already in use.",
+			"Another program on your computer is using port 8088, which Superset needs. Close it, then retry.")
+		return
+	}
 
 	logLine := func(s string) {
 		if s != "" {
